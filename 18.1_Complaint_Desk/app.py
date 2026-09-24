@@ -17,11 +17,14 @@ import time
 import json
 import pandas as pd
 import streamlit as st
+# pyrefly: ignore [missing-import]
 from langchain_core.prompts import ChatPromptTemplate
+# pyrefly: ignore [missing-import]
 from langchain_core.output_parsers import StrOutputParser
 
 # Optional .env loading for local environments
 try:
+    # pyrefly: ignore [missing-import]
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
@@ -170,6 +173,7 @@ with st.sidebar:
 def get_llm(provider_name: str, model_name: str, temp: float, api_key: str):
     """Instantiate the appropriate LangChain Chat model based on user selection."""
     if "OpenAI" in provider_name:
+        # pyrefly: ignore [missing-import]
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
             model=model_name,
@@ -178,6 +182,7 @@ def get_llm(provider_name: str, model_name: str, temp: float, api_key: str):
             timeout=30
         )
     elif "NVIDIA" in provider_name:
+        # pyrefly: ignore [missing-import]
         from langchain_nvidia_ai_endpoints import ChatNVIDIA
         return ChatNVIDIA(
             model=model_name,
@@ -186,6 +191,7 @@ def get_llm(provider_name: str, model_name: str, temp: float, api_key: str):
             timeout=30
         )
     elif "Groq" in provider_name:
+        # pyrefly: ignore [missing-import]
         from langchain_groq import ChatGroq
         return ChatGroq(
             model=model_name,

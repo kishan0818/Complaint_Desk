@@ -17,12 +17,16 @@ import time
 import json
 import requests
 import pandas as pd
+# pyrefly: ignore [missing-import]
 import streamlit as st
+# pyrefly: ignore [missing-import]
 from langchain_core.prompts import ChatPromptTemplate
+# pyrefly: ignore [missing-import]
 from langchain_core.output_parsers import StrOutputParser
 
 # Optional .env loading
 try:
+    # pyrefly: ignore [missing-import]
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
@@ -269,15 +273,19 @@ def mock_heuristic_inference(text: str):
 def get_unified_llm(mod_type: str, prov: str, model_str: str, temp: float, key: str, base_u: str = "http://localhost:11434"):
     try:
         if "18.2" in mod_type or "Ollama" in prov:
+            # pyrefly: ignore [missing-import]
             from langchain_ollama import ChatOllama
             return ChatOllama(model=model_str, temperature=temp, base_url=base_u)
         elif "OpenAI" in prov:
+            # pyrefly: ignore [missing-import]
             from langchain_openai import ChatOpenAI
             return ChatOpenAI(model=model_str, temperature=temp, api_key=key if key else "dummy-key", timeout=30)
         elif "NVIDIA" in prov:
+            # pyrefly: ignore [missing-import]
             from langchain_nvidia_ai_endpoints import ChatNVIDIA
             return ChatNVIDIA(model=model_str, temperature=temp, nvidia_api_key=key if key else "dummy-key", timeout=30)
         elif "Groq" in prov:
+            # pyrefly: ignore [missing-import]
             from langchain_groq import ChatGroq
             return ChatGroq(model=model_str, temperature=temp, groq_api_key=key if key else "dummy-key", timeout=30)
     except Exception:
