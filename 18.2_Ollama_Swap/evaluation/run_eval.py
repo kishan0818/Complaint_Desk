@@ -1,11 +1,12 @@
 """
 Evaluation script for Activity 18.2 — Local Ollama (Mistral).
-Measures classification accuracy and latency (average, min, max) across 10 benchmark complaints.
+Measures classification accuracy and latency (cold-start vs warm-state) across the 10 benchmark complaints.
 """
 
 import sys
 import csv
 import time
+import requests
 from pathlib import Path
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
@@ -21,9 +22,7 @@ if sys.platform == "win32":
 ALLOWED_CATEGORIES = ["billing", "loan", "fraud", "app_issue"]
 
 def normalize_category(raw_output: str) -> str:
-    cleaned = raw_output.strip().lower()
-    if cleaned in ALLOWED_CATEGORIES:
-        return cleaned
+    cleaned = raw_output.strip().lower().replace(".", "").replace(",", "")
     for cat in ALLOWED_CATEGORIES:
         if cat in cleaned:
             return cat
@@ -35,7 +34,23 @@ def run_evaluation():
         print(f"ERROR: Test file not found at {csv_path}")
         sys.exit(1)
 
-    print("Initializing ChatOllama(model='mistral', temperature=0.3)...")
+    # Health check
+    try:
+        res = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if res.status_code != 200:
+            raise ConnectionError("Ollama returned non-200")
+    except Exception:
+        print("=" * 75)
+        print("❌ ERROR: Ollama server is not running at http://localhost:11434")
+        print("Please start Ollama in a separate terminal: 'ollama serve'")
+        print("And make sure mistral is installed: 'ollama pull mistral'")
+        print("=" * 75)
+        sys.exit(1)
+
+    print("=" * 75)
+    print("🚀 Initializing ChatOllama(model='mistral', temperature=0.3)...")
+    print("=" * 75)
+    
     llm = ChatOllama(
         model="mistral",
         temperature=0.3,
@@ -43,54 +58,29 @@ def run_evaluation():
     )
 
     classification_prompt = ChatPromptTemplate.from_template(
-        """Classify this customer message into exactly ONE of these four categories:
+        """Classify this customer complaint into exactly ONE of these four categories:
 billing
 loan
 fraud
 app_issue
 
 Few-shot examples:
+- "I was charged an extra fee on my EMI statement." -> billing
+- "My account was debited twice for a grocery purchase." -> billing
+- "How can I apply for a personal loan and what is the interest rate?" -> loan
+- "My loan application is still pending after 2 weeks." -> loan
+- "I do not recognize a transaction on my debit card." -> fraud
+- "Someone used my card credentials without permission." -> fraud
+- "The mobile app crashes on the login screen." -> app_issue
+- "I cannot download my bank statement from the app." -> app_issue
 
-BILLING:
-Complaint: "I was charged an extra fee on my EMI." -> billing
-Complaint: "My account was debited twice." -> billing
-Complaint: "I was charged a late payment fee." -> billing
+Rules:
+1. Output ONLY the single category word in lowercase (billing, loan, fraud, or app_issue).
+2. Do not include punctuation, explanations, or introductory text.
 
-LOAN:
-Complaint: "How can I apply for a personal loan?" -> loan
-Complaint: "What is the interest rate for a loan?" -> loan
-Complaint: "My loan application is still pending." -> loan
-Complaint: "Can I increase my sanctioned loan amount?" -> loan
+Customer Complaint:
+{text}
 
-FRAUD:
-Complaint: "I don't recognize this transaction." -> fraud
-Complaint: "Someone used my debit card without permission." -> fraud
-Complaint: "I received an OTP for a purchase I did not make." -> fraud
-Complaint: "Someone changed my net banking password." -> fraud
-
-APP_ISSUE:
-Complaint: "The mobile app crashes." -> app_issue
-Complaint: "The app is stuck on the loading screen." -> app_issue
-Complaint: "Biometric login is not working." -> app_issue
-Complaint: "I cannot download my statement from the app." -> app_issue
-
-Important classification rules:
-- Loan application, loan eligibility, loan interest rate, loan status, foreclosure, or sanctioned amount -> loan.
-- Unauthorized transaction, stolen credentials, suspicious activity, unknown third-party access, OTP for an unrecognized purchase -> fraud.
-- Technical problems with the mobile/web application -> app_issue.
-- Charges, fees, deductions, duplicate debits, billing amounts -> billing.
-- Context & Follow-ups: If the message provides an account number, customer ID, or detail following up on an ongoing inquiry, retain the relevant category of the ongoing inquiry (e.g., app_issue, billing, or loan). Merely providing an account number, card number, or verification detail is NEVER fraud unless unauthorized activity, theft, or suspicious access is explicitly reported.
-
-Return ONLY:
-billing
-loan
-fraud
-app_issue
-
-Do not explain the classification.
-
-Previous Context (if any): {context}
-Customer Message: {text}
 Category:"""
     )
 
@@ -99,99 +89,52 @@ Category:"""
     total = 0
     correct = 0
     incorrect = 0
-    errors = 0
     latencies = []
-    results = []
-
-    print("Running classification evaluation on Local Ollama (mistral)...")
-    print("-" * 75)
 
     with open(csv_path, mode="r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             total += 1
-            expected = row["category"].strip().lower()
-            complaint = row["complaint"].strip()
+            cid = row.get("id", str(total))
+            complaint = row["complaint"]
+            expected = row.get("category", row.get("expected_category", "")).strip().lower()
 
-            start_time = time.perf_counter()
+            t0 = time.time()
             try:
-                raw_prediction = chain.invoke({
-                    "context": "None (Benchmark test case)",
-                    "text": complaint
-                })
-                elapsed = time.perf_counter() - start_time
-                latencies.append(elapsed)
+                raw_pred = chain.invoke({"text": complaint})
+                predicted = normalize_category(raw_pred)
+                lat = time.time() - t0
+                latencies.append(lat)
 
-                predicted = normalize_category(raw_prediction)
                 is_correct = (predicted == expected)
-
                 if is_correct:
                     correct += 1
-                    status = "[PASS]"
+                    status = "✅ PASS"
                 else:
                     incorrect += 1
-                    status = "[FAIL]"
+                    status = "❌ FAIL"
 
-                print(
-                    f"[{total:2d}] {status} Expected: {expected:<10} | Predicted: {predicted:<10} | "
-                    f"Latency: {elapsed:5.2f}s | Complaint: {complaint[:30]}...",
-                    flush=True
-                )
-                results.append({
-                    "id": total,
-                    "expected": expected,
-                    "predicted": predicted,
-                    "status": "PASS" if is_correct else "FAIL",
-                    "latency": elapsed,
-                    "complaint": complaint
-                })
-
+                print(f"[{cid:>2}] [{status}] Expected: {expected:<10} | Predicted: {predicted:<10} | Latency: {lat:6.2f}s | Complaint: {complaint[:30]}...", flush=True)
             except Exception as e:
-                elapsed = time.perf_counter() - start_time
-                errors += 1
-                err_str = str(e).replace("\n", " ")[:40]
-                print(f"[{total:2d}] [ERROR] Expected: {expected:<10} | Error: {err_str}... | Latency: {elapsed:5.2f}s", flush=True)
-                results.append({
-                    "id": total,
-                    "expected": expected,
-                    "predicted": "ERROR",
-                    "status": "ERROR",
-                    "latency": elapsed,
-                    "complaint": complaint
-                })
+                lat = time.time() - t0
+                latencies.append(lat)
+                incorrect += 1
+                print(f"[{cid:>2}] [⚠️ ERROR] Error: {e} | Latency: {lat:6.2f}s", flush=True)
 
-    avg_latency = (sum(latencies) / len(latencies)) if latencies else 0.0
-    min_latency = min(latencies) if latencies else 0.0
-    max_latency = max(latencies) if latencies else 0.0
-    acc = (correct / (correct + incorrect)) * 100.0 if (correct + incorrect) > 0 else 0.0
+    acc = (correct / total) * 100 if total > 0 else 0.0
+    avg_lat = sum(latencies) / len(latencies) if latencies else 0.0
+    cold_lat = latencies[0] if latencies else 0.0
+    warm_lat = sum(latencies[1:]) / (len(latencies) - 1) if len(latencies) > 1 else avg_lat
 
-    print("=" * 40)
-    print("Ollama Mistral Evaluation")
-    print("=" * 40)
-    print(f"Model: mistral")
-    print(f"Provider: Ollama Local")
-    print(f"Total test cases: {total}")
-    print()
-    print(f"Correct classifications: {correct}")
-    print(f"Incorrect classifications: {incorrect}")
-    print(f"Accuracy: {acc:.2f}%")
-    print()
-    print(f"Average latency: {avg_latency:.2f} seconds")
-    print(f"Minimum latency: {min_latency:.2f} seconds")
-    print(f"Maximum latency: {max_latency:.2f} seconds")
-    print("=" * 40)
-
-    return {
-        "total": total,
-        "correct": correct,
-        "incorrect": incorrect,
-        "errors": errors,
-        "accuracy": acc,
-        "avg_latency": avg_latency,
-        "min_latency": min_latency,
-        "max_latency": max_latency,
-        "results": results
-    }
+    print("=" * 75)
+    print("📊 Ollama Mistral Evaluation Summary:")
+    print(f"  Total Test Cases:                       {total}")
+    print(f"  Correct Classifications:                {correct}")
+    print(f"  Accuracy:                               {acc:.2f}%")
+    print(f"  Cold-Start Latency (Case 1):            {cold_lat:.2f}s")
+    print(f"  Warm-State Average Latency (Cases 2-10):{warm_lat:.2f}s")
+    print(f"  Overall Average Latency:                {avg_lat:.2f}s")
+    print("=" * 75)
 
 if __name__ == "__main__":
     run_evaluation()
