@@ -16,20 +16,25 @@ import os
 import time
 import json
 import pandas as pd
-# pyrefly: ignore [missing-import]
 import streamlit as st
-# pyrefly: ignore [missing-import]
 from langchain_core.prompts import ChatPromptTemplate
-# pyrefly: ignore [missing-import]
 from langchain_core.output_parsers import StrOutputParser
 
 # Optional .env loading for local environments
 try:
-    # pyrefly: ignore [missing-import]
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
+
+def get_secret(key: str, default: str = "") -> str:
+    """Safely fetch secrets from Streamlit without throwing StreamlitSecretNotFoundError."""
+    try:
+        if hasattr(st, "secrets") and key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return default
 
 # -----------------------------------------------------------------------------
 # Page Configuration & Styling
@@ -41,7 +46,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS styling for a polished, modern look
+# Custom CSS styling
 st.markdown("""
 <style>
     .main-header {
@@ -111,19 +116,19 @@ with st.sidebar:
     if "OpenAI" in provider:
         selected_model = "gpt-4o-mini"
         env_key = os.getenv("OPENAI_API_KEY", "")
-        secret_key = st.secrets.get("OPENAI_API_KEY", "") if hasattr(st, "secrets") else ""
+        secret_key = get_secret("OPENAI_API_KEY", "")
         default_key = env_key or secret_key
         api_key_input = st.text_input("OpenAI API Key", value=default_key, type="password", help="Enter your OpenAI API key (sk-...)")
     elif "NVIDIA" in provider:
         selected_model = "meta/llama-3.2-11b-vision-instruct"
         env_key = os.getenv("NVIDIA_API_KEY", "")
-        secret_key = st.secrets.get("NVIDIA_API_KEY", "") if hasattr(st, "secrets") else ""
+        secret_key = get_secret("NVIDIA_API_KEY", "")
         default_key = env_key or secret_key
         api_key_input = st.text_input("NVIDIA API Key", value=default_key, type="password", help="Enter your NVIDIA API Catalog key (nvapi-...)")
     elif "Groq" in provider:
         selected_model = "llama-3.3-70b-versatile"
         env_key = os.getenv("GROQ_API_KEY", "")
-        secret_key = st.secrets.get("GROQ_API_KEY", "") if hasattr(st, "secrets") else ""
+        secret_key = get_secret("GROQ_API_KEY", "")
         default_key = env_key or secret_key
         api_key_input = st.text_input("Groq API Key", value=default_key, type="password", help="Enter your Groq API key (gsk_...)")
     else:
@@ -165,7 +170,6 @@ with st.sidebar:
 def get_llm(provider_name: str, model_name: str, temp: float, api_key: str):
     """Instantiate the appropriate LangChain Chat model based on user selection."""
     if "OpenAI" in provider_name:
-        # pyrefly: ignore [missing-import]
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
             model=model_name,
@@ -174,7 +178,6 @@ def get_llm(provider_name: str, model_name: str, temp: float, api_key: str):
             timeout=30
         )
     elif "NVIDIA" in provider_name:
-        # pyrefly: ignore [missing-import]
         from langchain_nvidia_ai_endpoints import ChatNVIDIA
         return ChatNVIDIA(
             model=model_name,
@@ -183,7 +186,6 @@ def get_llm(provider_name: str, model_name: str, temp: float, api_key: str):
             timeout=30
         )
     elif "Groq" in provider_name:
-        # pyrefly: ignore [missing-import]
         from langchain_groq import ChatGroq
         return ChatGroq(
             model=model_name,
@@ -206,7 +208,6 @@ if "Demo" not in provider:
 # -----------------------------------------------------------------------------
 # Two-Chain LangChain Architecture (LCEL)
 # -----------------------------------------------------------------------------
-# Chain 1: Classification Prompt
 classify_prompt = ChatPromptTemplate.from_template(
     """Classify this customer complaint into exactly ONE of these four categories:
 billing
@@ -234,7 +235,6 @@ Customer Complaint:
 Category:"""
 )
 
-# Chain 2: Category-Appropriate Reply Prompt
 reply_prompt = ChatPromptTemplate.from_template(
     """You are a helpful, professional, and empathetic customer-support assistant for XYZ Finance.
 
@@ -335,11 +335,9 @@ with tab_chat:
             )
     else:
         for entry in st.session_state.log:
-            # User Message
             with st.chat_message("user"):
                 st.write(entry["complaint"])
             
-            # Assistant Response
             with st.chat_message("assistant"):
                 cat = entry["category"]
                 badge_class = CATEGORY_INFO.get(cat, {}).get("css", "badge-billing")
@@ -360,22 +358,17 @@ with tab_chat:
     if active_text:
         clean_text = active_text.strip()
         if clean_text:
-            # 1. Render User Message
             with st.chat_message("user"):
                 st.write(clean_text)
 
-            # 2. Execute Two-Chain Workflow
             with st.chat_message("assistant"):
                 with st.spinner("Processing complaint through two-chain LCEL pipeline..."):
                     start_time = time.time()
                     
                     if llm is not None and classify_chain is not None and reply_chain is not None:
                         try:
-                            # Chain 1: Classify
                             raw_cat = classify_chain.invoke({"text": clean_text})
                             cat = normalize_category(raw_cat)
-                            
-                            # Chain 2: Generate Reply
                             reply = reply_chain.invoke({"cat": cat, "text": clean_text}).strip()
                         except Exception as e:
                             st.error(f"Inference error: {e}")
@@ -386,7 +379,6 @@ with tab_chat:
                     elapsed = time.time() - start_time
                     word_count = len(reply.split())
                     
-                    # Display response
                     badge_class = CATEGORY_INFO.get(cat, {}).get("css", "badge-billing")
                     badge_label = CATEGORY_INFO.get(cat, {}).get("label", cat.upper())
                     header_html = (
@@ -397,7 +389,6 @@ with tab_chat:
                     st.markdown(header_html, unsafe_allow_html=True)
                     st.write(reply)
 
-                    # Persist in session state
                     st.session_state.log.append({
                         "complaint": clean_text,
                         "category": cat,
@@ -412,7 +403,7 @@ with tab_chat:
     # Chat Export Utilities
     if st.session_state.log:
         st.markdown("---")
-        exp_col1, exp_col2, exp_col3 = st.columns([1, 1, 2])
+        exp_col1, exp_col2, _ = st.columns([1, 1, 2])
         with exp_col1:
             json_str = json.dumps(st.session_state.log, indent=2)
             st.download_button("📥 Export as JSON", data=json_str, file_name="complaint_desk_chat.json", mime="application/json")
@@ -428,12 +419,10 @@ with tab_bench:
     st.markdown("### 🧪 In-App Benchmark Runner")
     st.markdown("Evaluate the two-chain classification and reply pipeline against standard financial test complaints in real time.")
     
-    # Load test cases
     test_csv_path = os.path.join(os.path.dirname(__file__), "evaluation", "test_cases.csv")
     if os.path.exists(test_csv_path):
         df_tests = pd.read_csv(test_csv_path)
     else:
-        # Fallback test cases
         df_tests = pd.DataFrame([
             {"id": 1, "complaint": "I was charged ₹500 extra on my EMI.", "expected_category": "billing"},
             {"id": 2, "complaint": "My account was debited twice for a grocery purchase.", "expected_category": "billing"},
@@ -471,7 +460,7 @@ with tab_bench:
                     raw_cat = classify_chain.invoke({"text": text})
                     pred_cat = normalize_category(raw_cat)
                     reply = reply_chain.invoke({"cat": pred_cat, "text": text}).strip()
-                except Exception as e:
+                except Exception:
                     pred_cat, reply = mock_heuristic_inference(text)
             else:
                 pred_cat, reply = mock_heuristic_inference(text)
@@ -499,7 +488,6 @@ with tab_bench:
         acc = (correct_count / len(df_tests)) * 100.0
         avg_lat = total_latency / len(df_tests)
         
-        # Summary Metrics
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Cases", len(df_tests))
         m2.metric("Accuracy", f"{acc:.1f}%")
@@ -526,7 +514,7 @@ with tab_rubric:
         )
         st.success(
             "#### 2. Prompt Quality & Justified Temperature (20%)\n"
-            "- **Engineered Prompts**: Few-shot exemplars with explicit negative constraints (no invented policies, no PII harvesting).\n"
+            "- **Engineered Prompts**: Few-shot exemplars with explicit negative constraints (no PII collection, no hallucinated policies).\n"
             "- **Temperature Justification**: Fixed at $T=0.3$ to optimize strict category convergence while retaining empathetic linguistic cadence."
         )
     with col_r2:
